@@ -323,20 +323,6 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\unregister-startup.ps1
 
 수동 `run`도 기존 기준 목록·발송 이력·관심 분야를 적용하므로 알림이 꼭 생기는 것은 아닙니다. 원인 확인을 위해 `state.sqlite3`를 지우지 마세요. 삭제하면 개인 설정과 중복 방지 이력이 사라집니다.
 
-## 업데이트: 설정을 다시 하지 않아도 됩니다
-
-1. 실행 중인 프로그램/예약 작업을 중지합니다.
-2. 새 ZIP은 별도 폴더에 압축을 풉니다.
-3. 코드와 안내 파일을 기존 실행 폴더에 덮어씁니다. **`.env`, `.venv`, `state.sqlite3`는 유지**합니다.
-4. `requirements.txt`가 바뀌었다면 기존 폴더에서 패키지를 업데이트합니다.
-
-```powershell
-.\.venv\Scripts\python.exe -m pip install -r requirements.txt
-```
-
-5. 수동 `serve` 또는 기존 예약 작업 중 한 가지 방식으로 재시작합니다.
-6. 이전에 일부 분야만 선택했다면 텔레그램에서 `/all`로 전체 선택할 수 있습니다. 업데이트는 기존 선택을 강제로 덮어쓰지 않습니다.
-
 ## 여러 사람이 쓰는 방법
 
 일반적인 배포 방식은 **각자가 복제/다운로드하고 자기 API 키·봇을 사용하는 방식**입니다. 운영자의 키나 `.env`를 함께 배포하지 않습니다.
@@ -366,25 +352,6 @@ TELEGRAM_ALLOWED_CHAT_IDS=111111111,222222222
 - 전송 성공 직후 이력 저장 전 PC가 종료되는 경우에는 중복 발송 가능성이 있습니다.
 - PC가 오래 꺼져 있으면 Telegram에 보관된 오래된 피드백을 받지 못할 수 있습니다.
 - Gemini/Telegram 실서비스 연결은 개인 키로 확인해야 합니다. 자동 테스트는 모의 응답으로 핵심 로직을 검증합니다.
-
-## GitHub에 올릴 때
-
-공개해도 되는 파일은 코드, README, 설치 스크립트, 빈 `.env.example`, `.gitignore`, 테스트입니다. **실제 `.env`, API 키, 봇 토큰, DB, 로그, `.venv`는 올리지 않습니다.** `.gitignore`가 포함되어 있습니다.
-
-새 빈 공개 저장소를 만든 다음, 실행 폴더에서 필요한 파일만 지정해 커밋할 수 있습니다.
-
-```powershell
-git init
-git branch -M main
-git add agent.py interests.py test_agent.py requirements.txt README.md .gitignore .env.example install.ps1 start.bat register-startup.ps1 unregister-startup.ps1
-git diff --cached --stat
-git diff --cached
-git commit -m "Add personalized GitHub Trending Telegram agent"
-git remote add origin https://github.com/bangkh/git_trending_alram_daliy.git
-git push -u origin main
-```
-
-자신의 저장소에 배포하는 경우 원격 주소를 본인 저장소 URL로 바꾸세요. 이미 Git 저장소인 폴더라면 기존 remote와 브랜치를 먼저 확인하고 위 초기화 절차를 그대로 반복하지 마세요. 커밋 직전 변경 내용을 확인해 비밀값이 포함되지 않았는지 점검합니다. `.gitignore`는 이미 커밋한 비밀값을 지워주지 않습니다. 노출했다면 키/토큰을 먼저 폐기·재발급해야 합니다.
 
 ## 파일 구성
 
