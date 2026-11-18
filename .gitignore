@@ -1,0 +1,16 @@
+.env
+.env.*
+!.env.example
+.venv/
+venv/
+*.sqlite3*
+*.db
+*.db-*
+*.lock
+*.log
+__pycache__/
+*.py[cod]
+.pytest_cache/
+build/
+dist/
+*.zip
