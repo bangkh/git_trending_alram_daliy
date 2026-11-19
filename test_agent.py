@@ -67,6 +67,11 @@ class Tests(unittest.TestCase):
         with patch.object(a,'http',return_value=type('R',(),{'text':html})()),patch.object(i,'send') as send:
             i.digest(self.db,self.now)
             send.assert_not_called()
+    def test_old_model_failure_does_not_block_new_model(self):
+        self.db.execute('INSERT INTO calls(week,name,model) VALUES (?,?,?)',('2026-11-18','a/b','gemini-2.5-flash-lite'))
+        self.db.commit()
+        self.assertIsNotNone(a.reserve(self.db,'2026-11-18','a/b'))
+        self.assertIsNone(a.reserve(self.db,'2026-11-18','a/b'))
     def test_daily_boundary(self):
         _,old=a.due(self.now-timedelta(minutes=1),None)
         self.assertTrue(a.due(self.now,old)[0])
@@ -131,9 +136,10 @@ class GeminiTests(unittest.TestCase):
             http.return_value.json.return_value=data
             self.assertEqual(a.summarize(self.db,'2026-11-18','a/b',''), '목적: 테스트')
             args,kw=http.call_args
-            self.assertIn('generativelanguage.googleapis.com',args[1])
+            self.assertIn('gemini-3.5-flash-lite:generateContent',args[1])
+            self.assertEqual(kw['json']['generationConfig']['thinkingConfig'],{'thinkingLevel':'MINIMAL'})
             self.assertNotIn('fake-key',args[1])
-            self.assertEqual(kw['json']['generationConfig']['maxOutputTokens'],300)
+            self.assertEqual(kw['json']['generationConfig']['maxOutputTokens'],1024)
         self.assertEqual(self.db.execute('select summary from repos').fetchone()[0],'목적: 테스트')
     def test_quota_stops_today_without_fallback(self):
         with patch.object(i,'document',return_value=('',[])),patch.object(a,'http',side_effect=RuntimeError('HTTP 429')) as http:
