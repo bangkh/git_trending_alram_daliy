@@ -109,7 +109,7 @@ def poll(db):
                     send(chat,'알림을 중지했습니다. /topics 로 다시 선택하세요.')
                 elif command == '/status':
                     selected=json.loads(db.execute('SELECT topics FROM profiles WHERE chat=?',(chat,)).fetchone()[0])
-                    send(chat,'선택: '+(', '.join(TOPICS[k][0] for k in selected) or '없음')+'\n매일 09:00 KST / 프로그램 개수 제한 없음 / Gemini 무료 한도 적용')
+                    send(chat,'선택: '+(', '.join(TOPICS[k][0] for k in selected) or '없음')+'\n매일 09:00 KST / 프로그램 개수 제한 없음 / Gemini 무료 한도 적용'+'\n최근 결과: '+(a.meta(db,f'last_result:{chat}') or '아직 확인 전'))
                 else:
                     menu(db,chat)
         a.setmeta(db,'telegram_offset',str(update['update_id']+1))
@@ -143,8 +143,13 @@ def score(db,chat,tags):
 def digest(db,now):
     allowed=setup(db)
     items=a.parse_trending(a.http('GET','https://github.com/trending?since=daily',headers={'User-Agent':'personal-trending-watcher/2.0'}).text)
-    if a.ingest(db,items,now):
-        print('첫 기준 목록 저장: 요약/알림 없음. 텔레그램 /topics 로 분야 선택.'); return
+    a.ingest(db,items,now)
+    if a.meta(db, 'initial_delivery_v2') is None:
+        # Requeue only the old baseline entries still Trending, never delivered summaries.
+        for name, _ in items:
+            db.execute('UPDATE repos SET done=0,first_seen=? WHERE name=? AND done=1 AND summary IS NULL',
+                       (now.isoformat(),name))
+        a.setmeta(db, 'initial_delivery_v2', 'yes')
     profiles=[(c,json.loads(t)) for c,t in db.execute('SELECT chat,topics FROM profiles') if c in allowed and json.loads(t)]
     if not profiles: return
     cutoff=(now-timedelta(days=7)).isoformat()
@@ -156,8 +161,19 @@ def digest(db,now):
         if interested:
             candidates.append((max(score(db,c,tags) for c in interested),rid,name,desc,summary,tags,interested))
     candidates.sort(key=lambda r:-r[0])
+    waiting = {chat: 0 for chat, _ in profiles}
+    errors = {chat: 0 for chat, _ in profiles}
+    for candidate in candidates:
+        for chat in candidate[-1]:
+            waiting[chat] += 1
     for _,rid,name,desc,summary,tags,chats in candidates:
-        summary=summary or a.summarize(db,now.date().isoformat(),name,desc)
+        try:
+            summary=summary or a.summarize(db,now.date().isoformat(),name,desc)
+        except RuntimeError as error:
+            print(f'요약 실패 {name}: {error}', flush=True)
+            for chat in chats:
+                errors[chat] += 1
+            continue
         if summary is None: continue
         for chat in chats:
             send(chat,f'{name}\n{summary}\n분류: '+', '.join(TOPICS[t][0] for t in tags)+f'\nhttps://github.com/{name}',
@@ -165,3 +181,28 @@ def digest(db,now):
                    {'text':'👎 덜 보고 싶어요','callback_data':f'vote:{rid}:-1'}]])
             db.execute('INSERT OR IGNORE INTO deliveries VALUES (?,?)',(chat,name))
             db.commit()
+
+
+            waiting[chat] -= 1
+            a.setmeta(db, f'delivered_day:{chat}', now.date().isoformat())
+    for chat, _ in profiles:
+        day = now.date().isoformat()
+        if waiting[chat]:
+            if a.meta(db, 'gemini_quota_day') == day:
+                outcome = f'Gemini 사용 한도로 미발송 {waiting[chat]}개가 남았습니다. 다음 회차에 재시도합니다.'
+            elif errors[chat]:
+                outcome = f'요약 오류로 미발송 {waiting[chat]}개가 남았습니다. API 설정과 실행 로그를 확인하세요.'
+            else:
+                outcome = f'미발송 {waiting[chat]}개가 남았습니다. 오늘 이미 시도한 요약은 다음 날 재시도합니다.'
+            kind = 'pending'
+        elif a.meta(db, f'delivered_day:{chat}') == day:
+            outcome, kind = '오늘 저장소 알림 전송을 완료했습니다.', 'sent'
+        else:
+            outcome, kind = '오늘 확인 완료 · 선택한 분야에 새로 보낼 저장소가 없습니다.', 'empty'
+        print(f'{day}: {outcome}', flush=True)
+        # Persist only after successful delivery; unchanged daily results are not repeated.
+        key = f'digest_notice:{day}:{chat}'
+        if a.meta(db, key) != kind:
+            send(chat, f'GitHub Trending · {day}\n{outcome}')
+            a.setmeta(db, key, kind)
+        a.setmeta(db, f'last_result:{chat}', f'{day} · {outcome}')

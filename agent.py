@@ -88,7 +88,7 @@ def ingest(db, items, now):
     baseline = meta(db, 'initialized') is None
     for name, description in items:
         db.execute('INSERT OR IGNORE INTO repos(name,description,done,first_seen) VALUES (?,?,?,?)',
-                   (name, description, int(baseline), now.isoformat()))
+                   (name, description, 0, now.isoformat()))
     setmeta(db, 'initialized', 'yes')
     return baseline
 
@@ -201,6 +201,7 @@ def main():
                     with FileLock(str(DB) + '.lock', timeout=1), connect() as db:
                         poll(db)
                         ready, slot = due(datetime.now(TZ), meta(db, 'last_slot'))
+                        ready = ready or meta(db, 'initial_delivery_v2') is None
                     if ready and time.time() >= retry_at:
                         try:
                             run()
@@ -220,3 +221,4 @@ if __name__ == '__main__':
     except Exception as e:
         print('오류:', str(e) if isinstance(e, RuntimeError) else type(e).__name__)
         raise SystemExit(1)
+

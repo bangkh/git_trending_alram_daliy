@@ -38,9 +38,35 @@ class Tests(unittest.TestCase):
         html='<article class="Box-row"><h2><a href="/a/old">x</a></h2></article>'
         with patch.object(a,'http',return_value=type('R',(),{'text':html})()),patch.object(i,'document',return_value=('', ['other'])),patch.object(i,'send') as send:
             i.digest(self.db,self.now)
-            self.assertEqual(send.call_count,16)
+            self.assertEqual(send.call_count,20)
             i.digest(self.db,self.now)
-            self.assertEqual(send.call_count,16)
+            self.assertEqual(send.call_count,20)
+    def test_first_run_migration_and_daily_notice(self):
+        a.ingest(self.db,[('a/b','')],self.now-timedelta(days=10))
+        self.db.execute('update repos set done=1')
+        html='<article class="Box-row"><h2><a href="/a/b">x</a></h2></article>'
+        with patch.object(a,'http',return_value=type('R',(),{'text':html})()),patch.object(i,'document',return_value=('', ['other'])),patch.object(a,'summarize',return_value='summary') as ai,patch.object(i,'send') as send:
+            i.digest(self.db,self.now)
+            ai.assert_called_once()
+            self.assertEqual(self.db.execute('select count(*) from deliveries').fetchone()[0],2)
+            first=send.call_count
+            i.digest(self.db,self.now)
+            self.assertEqual(send.call_count,first)
+            i.digest(self.db,self.now+timedelta(days=1))
+            self.assertEqual(send.call_count,first+2)
+            self.assertIn('새로 보낼 저장소가 없습니다',send.call_args.args[1])
+    def test_pending_is_not_empty(self):
+        html='<article class="Box-row"><h2><a href="/a/b">x</a></h2></article>'
+        with patch.object(a,'http',return_value=type('R',(),{'text':html})()),patch.object(i,'document',return_value=('', ['other'])),patch.object(a,'summarize',side_effect=RuntimeError('HTTP 403')),patch.object(i,'send') as send:
+            i.digest(self.db,self.now)
+            self.assertIn('요약 오류',send.call_args.args[1])
+            self.assertEqual(self.db.execute('select count(*) from deliveries').fetchone()[0],0)
+    def test_paused_no_notice(self):
+        self.db.execute('update profiles set topics=?',('[]',))
+        html='<article class="Box-row"><h2><a href="/a/b">x</a></h2></article>'
+        with patch.object(a,'http',return_value=type('R',(),{'text':html})()),patch.object(i,'send') as send:
+            i.digest(self.db,self.now)
+            send.assert_not_called()
     def test_daily_boundary(self):
         _,old=a.due(self.now-timedelta(minutes=1),None)
         self.assertTrue(a.due(self.now,old)[0])
@@ -53,7 +79,7 @@ class Tests(unittest.TestCase):
     def test_first_baseline(self):
         self.assertTrue(a.ingest(self.db,[('a/b','')],self.now))
         self.assertFalse(a.ingest(self.db,[('a/b',''),('a/c','')],self.now))
-        self.assertEqual(self.db.execute('select name from repos where done=0').fetchall(),[('a/c',)])
+        self.assertEqual(self.db.execute('select name from repos where done=0').fetchall(),[('a/b',),('a/c',)])
     def test_vote_idempotent_and_isolated(self):
         a.ingest(self.db,[('a/b','')],self.now)
         self.db.execute('insert into deliveries values (?,?)',('1','a/b'))
@@ -75,10 +101,12 @@ class Tests(unittest.TestCase):
         self.db.execute('update profiles set topics=? where chat=?',('["claude_plugins"]','1'))
         html='<article class="Box-row"><h2><a href="/a/new">x</a></h2></article>'
         with patch.object(a,'http',return_value=type('R',(),{'text':html})()),patch.object(i,'document',return_value=('', ['web_app'])),patch.object(a,'summarize') as ai,patch.object(i,'send') as send:
-            i.digest(self.db,self.now);ai.assert_not_called();send.assert_not_called()
+            i.digest(self.db,self.now);ai.assert_not_called()
+            self.assertIn('새로 보낼 저장소가 없습니다',send.call_args.args[1])
     def test_cached_delivery_failure(self):
         a.ingest(self.db,[('a/old','')],self.now);a.ingest(self.db,[('a/new','')],self.now)
         self.db.execute('update profiles set topics=? where chat=?',('["mcp"]','1'))
+        self.db.execute('update repos set done=1 where name=?',('a/old',))
         self.db.execute('update repos set summary=? where name=?',('cached','a/new'))
         html='<article class="Box-row"><h2><a href="/a/new">x</a></h2></article>'
         with patch.object(a,'http',return_value=type('R',(),{'text':html})()),patch.object(i,'document',return_value=('', ['mcp'])),patch.object(a,'summarize') as ai,patch.object(i,'send',side_effect=RuntimeError('fail')):
@@ -125,3 +153,4 @@ class GeminiTests(unittest.TestCase):
             http.assert_not_called()
 
 if __name__=='__main__':unittest.main()
+
